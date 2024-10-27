@@ -1,3 +1,4 @@
+
 package com.techNova.controller;
 
 import com.techNova.entity.User;
@@ -8,15 +9,14 @@ import lombok.Setter;
 import org.springframework.web.servlet.ModelAndView;
 import org.springframework.web.servlet.mvc.Controller;
 
-import java.text.ParseException;
-import java.text.SimpleDateFormat;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.Date;
 import java.util.Optional;
 @Setter
 public class UserController implements Controller {
 
     private  UserService userService;
-    private  SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
 
     @Override
     public ModelAndView handleRequest(HttpServletRequest request, HttpServletResponse response) throws Exception {
@@ -27,10 +27,10 @@ public class UserController implements Controller {
             return listUsers();
         } else if (path.endsWith("/users/new") && method.equals("GET")) {
             return newUserForm();
-        } else if (path.matches("/users/\\d+/edit") && method.equals("GET")) {
+        } else if (path.matches(".*/users/\\d+/edit$") && method.equals("GET")) {
             Long id = extractIdFromPath(path);
             return editUserForm(id);
-        } else if (path.matches("/users/\\d+/delete") && method.equals("GET")) {
+        } else if (path.matches(".*/users/\\d+/delete$") && method.equals("GET")) {
             Long id = extractIdFromPath(path);
             return deleteUser(id);
         } else if (path.endsWith("/users/save") && method.equals("POST")) {
@@ -46,11 +46,11 @@ public class UserController implements Controller {
         User user;
 
         try {
+            // Get identification and check if it exists
             String identification = request.getParameter("identification");
             Long userId = idParam != null && !idParam.isEmpty() ? Long.parseLong(idParam) : null;
 
-            Optional<User> existingUser = userService.getUserByUsername(identification);
-            if (existingUser.isPresent() && !existingUser.get().getId().equals(userId)) {
+            if (userService.getUserByUsername(identification).isPresent() && (userId == null || !userService.findById(userId).isPresent())) {
                 modelAndView = new ModelAndView(userId != null ? "editUser" : "userForm");
                 user = userId != null ? userService.findById(userId).orElse(new User()) : new User();
                 modelAndView.addObject("user", user);
@@ -58,11 +58,12 @@ public class UserController implements Controller {
                 return modelAndView;
             }
 
+            // Validate expiration date
             String expirationDateStr = request.getParameter("expirationDate");
             if (expirationDateStr != null && !expirationDateStr.isEmpty()) {
-                Date expirationDate = dateFormat.parse(expirationDateStr);
-                Date registrationDate = new Date();
-                if (expirationDate.before(registrationDate)) {
+                LocalDate expirationDate = LocalDate.parse(expirationDateStr);
+                LocalDate registrationDate = LocalDate.now();
+                if (expirationDate.isBefore(registrationDate)) {
                     modelAndView = new ModelAndView(userId != null ? "editUser" : "userForm");
                     user = userId != null ? userService.findById(userId).orElse(new User()) : new User();
                     updateUserFields(user, request);
@@ -72,21 +73,21 @@ public class UserController implements Controller {
                 }
             }
 
+            // Process the save/update
             if (userId != null) {
                 Optional<User> optionalUser = userService.findById(userId);
                 if (optionalUser.isPresent()) {
                     user = optionalUser.get();
                     updateUserFields(user, request);
-                    userService.update(user);
                 } else {
                     return new ModelAndView("redirect:/users");
                 }
             } else {
                 user = new User();
                 updateUserFields(user, request);
-                userService.create(user);
             }
 
+            userService.create(user);
             return new ModelAndView("redirect:/users");
 
         } catch (Exception e) {
@@ -100,27 +101,21 @@ public class UserController implements Controller {
     }
 
     private void updateUserFields(User user, HttpServletRequest request) {
-        user.setUsername(request.getParameter("username"));
-        user.setEmail(request.getParameter("email"));
-        user.setFirstName(request.getParameter("firstName"));
         user.setLastName(request.getParameter("lastName"));
+        user.setFirstName(request.getParameter("firstName"));
         user.setIdentification(request.getParameter("identification"));
         user.setNationality(request.getParameter("nationality"));
+        user.setUsername(request.getParameter("username"));
+        user.setEmail(request.getParameter("email"));
 
-        try {
-            String registrationDateStr = request.getParameter("registrationDate");
-            if (registrationDateStr != null && !registrationDateStr.isEmpty()) {
-                user.setRegistrationDate(dateFormat.parse(registrationDateStr));
-            } else {
-                user.setRegistrationDate(new Date());
+        String expirationDateStr = request.getParameter("expirationDate");
+        if (expirationDateStr != null && !expirationDateStr.isEmpty()) {
+            try {
+                LocalDate expirationDate = LocalDate.parse(expirationDateStr);
+                user.setExpirationDate(Date.from(expirationDate.atStartOfDay(ZoneId.systemDefault()).toInstant()));
+            } catch (Exception e) {
+                throw new IllegalArgumentException("Invalid date format");
             }
-
-            String expirationDateStr = request.getParameter("expirationDate");
-            if (expirationDateStr != null && !expirationDateStr.isEmpty()) {
-                user.setExpirationDate(dateFormat.parse(expirationDateStr));
-            }
-        } catch (ParseException e) {
-            throw new IllegalArgumentException("Invalid date format", e);
         }
     }
 
@@ -133,9 +128,10 @@ public class UserController implements Controller {
     private ModelAndView newUserForm() {
         ModelAndView modelAndView = new ModelAndView("userForm");
         User user = new User();
-        user.setExpirationDate(new Date(System.currentTimeMillis() + (365L * 24 * 60 * 60 * 1000))); // 1 year from now
+        // Set default expiration date to one year from now
+        user.setExpirationDate(Date.from(LocalDate.now().plusYears(1).atStartOfDay(ZoneId.systemDefault()).toInstant()));
         modelAndView.addObject("user", user);
-        modelAndView.addObject("minDate", new Date());
+        modelAndView.addObject("minDate", Date.from(LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toInstant()));
         return modelAndView;
     }
 
@@ -158,6 +154,7 @@ public class UserController implements Controller {
 
     private Long extractIdFromPath(String path) {
         String[] segments = path.split("/");
-        return Long.parseLong(segments[segments.length - 2]);
+        return Long.parseLong(segments[segments.length - 2]); // ID should be second-to-last segment
     }
+
 }
